@@ -1,0 +1,13 @@
+/build/
+/.legacy/
+/.qa-*/
+/.omo/
+/downloads/
+/dump/
+/evidence/
+/backups/
+/runtime-1195/
+/compile_commands.json
+*.log
+*.user
+.vs/
