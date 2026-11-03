@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "gameFileVersion": "CL-301524_JKS-17219",
+  "steamAppId": 4115450,
+  "steamBuildId": 26266538,
+  "testedUE4SSCommit": "1ceefac8b8c286f0fb3eb62b4aae075ff81df0bd",
+  "sourcePackage": {
+    "url": "https://github.com/KintaroModding/ue4ss/releases/tag/v3.0.1-1195-g1ceefac8",
+    "sha256": "0b6b7f9430502c1fbeadb09740e586063dce42fe4f7d7a3ee7be51c9bd6ca304"
+  },
+  "files": {
+    "MemberVariableLayout.ini": "8c5017d84c4553632b2ffba320ff62d3998b273640e302a28b60d4be98703fd0",
+    "UE4SS_Signatures/GUObjectArray.lua": "0066ca60427679e1b9d86d18857eaab61047c0e6959a45a863d9f9dd3cb7efce",
+    "UE4SS_Signatures/GNatives.lua": "c7ba42f56c04c784217cbf5b50ffc11f8e66aa246df5813321c4d4a7a06d6598"
+  }
+}
