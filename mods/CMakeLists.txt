@@ -1,2 +1,4 @@
-# T4 supplies the PBZEditor target after the source dependency is initialized.
-message(FATAL_ERROR "PBZ mod build configuration is pending.")
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/$<CONFIG>/bin")
+set(CMAKE_LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/$<CONFIG>/lib")
+set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/$<CONFIG>/lib")
+add_subdirectory(PBZEditor)

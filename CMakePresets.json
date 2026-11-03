@@ -1,5 +1,24 @@
 {
   "version": 6,
-  "configurePresets": [],
-  "buildPresets": []
+  "cmakeMinimumRequired": { "major": 3, "minor": 26, "patch": 0 },
+  "configurePresets": [{
+    "name": "ninja-msvc-x64",
+    "generator": "Ninja",
+    "binaryDir": "${sourceDir}/build/msvc",
+    "architecture": { "value": "x64", "strategy": "external" },
+    "cacheVariables": {
+      "CMAKE_BUILD_TYPE": "Game__Shipping__Win64",
+      "CMAKE_C_COMPILER": "cl.exe",
+      "CMAKE_CXX_COMPILER": "cl.exe",
+      "CMAKE_ASM_MASM_COMPILER": "ml64.exe",
+      "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+      "UE4SS_VERSION_CHECK": "OFF"
+    }
+  }],
+  "buildPresets": [{
+    "name": "ninja-msvc-x64",
+    "configurePreset": "ninja-msvc-x64",
+    "jobs": 4,
+    "targets": ["UE4SS", "proxy", "PBZEditor"]
+  }]
 }

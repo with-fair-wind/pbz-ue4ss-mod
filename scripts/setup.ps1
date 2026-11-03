@@ -1,6 +1,6 @@
 #Requires -Version 7.0
 [CmdletBinding()]
-param()
+param([switch]$VerifyOnly)
 
 $ErrorActionPreference = 'Stop'
 $repositoryRoot = Split-Path -Parent $PSScriptRoot
@@ -21,9 +21,13 @@ function Assert-CleanDependency {
             @(Get-ChildItem -LiteralPath $Directory -Force).Count -gt 0) {
             throw "Dependency directory is not an initialized submodule and is not empty: $Directory"
         }
+        if ($VerifyOnly) { throw "Dependency is not initialized: $Directory" }
         return
     }
 
+    $alternate = Invoke-Git $Directory @('rev-parse', '--git-path', 'objects/info/alternates')
+    if (-not [IO.Path]::IsPathRooted($alternate)) { $alternate = Join-Path $Directory $alternate }
+    if (Test-Path -LiteralPath $alternate) { throw "Dependency uses an external object store: $Directory" }
     $changes = @(Invoke-Git $Directory @('status', '--porcelain=v1', '--untracked-files=all', '--ignore-submodules=all'))
     if ($changes.Count -gt 0) {
         throw "Dirty dependency preserved; commit or move your changes before setup: $Directory`n$($changes -join "`n")"
@@ -44,11 +48,11 @@ try {
     Assert-CleanDependency (Join-Path $repositoryRoot 'RE-UE4SS')
 
     # Upstream SSH URLs use HTTPS for this invocation only; pins come from gitlinks.
-    Invoke-Git $repositoryRoot @(
+    if (-not $VerifyOnly) { Invoke-Git $repositoryRoot @(
         '-c', 'url.https://github.com/.insteadOf=git@github.com:',
         '-c', 'url.https://github.com/.insteadOf=ssh://git@github.com/',
         'submodule', 'update', '--init', '--recursive', '--', 'RE-UE4SS'
-    ) | Write-Host
+    ) | Write-Host }
 
     $actualCommit = Invoke-Git (Join-Path $repositoryRoot 'RE-UE4SS') @('rev-parse', 'HEAD')
     if ($actualCommit -ne $expectedCommit) {
