@@ -64,12 +64,12 @@ function Get-BuildSourceHashes {
     $hashes = [ordered]@{}
     foreach ($relative in @('CMakeLists.txt', 'CMakePresets.json', 'cmake/PBZTooling.cmake',
         'mods/CMakeLists.txt', 'mods/PBZEditor/CMakeLists.txt', 'mods/PBZEditor/src/dllmain.cpp',
-        'scripts/build.ps1', 'scripts/setup.ps1', 'scripts/profile.ps1', '.clang-format')) {
+        'scripts/build.ps1', 'scripts/setup.ps1', 'scripts/profile.ps1', 'scripts/runtime.ps1', '.clang-format')) {
         $hashes[$relative] = (Get-FileHash -LiteralPath (Join-Path $Root $relative)).Hash.ToLowerInvariant()
     }
     return $hashes
 }
-. (Join-Path $PSScriptRoot 'profile.ps1')
+. (Join-Path $PSScriptRoot 'runtime.ps1')
 $root = Split-Path $PSScriptRoot -Parent
 $triplet = 'Game__Shipping__Win64'
 if (-not $BuildDirectory) { $BuildDirectory = Join-Path $root 'build/msvc' }
@@ -120,14 +120,30 @@ try {
         }
         foreach ($language in @('C', 'CXX')) {
             $pattern = '(?m)^CMAKE_' + $language + '_COMPILER:[^=]+=(.+)\r?$'
-            if ($cache -notmatch $pattern -or $Matches[1].Trim().Replace('\', '/') -ine $compilerPath.Replace('\', '/')) { throw 'Cache compiler differs from selected Visual Studio installation.' }
+            if ($cache -notmatch $pattern) { throw 'Cache compiler is missing.' }
+            $cachedCompiler = $Matches[1].Trim()
+            if ($cachedCompiler -ieq 'cl.exe') {
+                # The preset stores a command name; CMake records its resolved tool separately.
+                $cacheVersion = @()
+                foreach ($part in @('MAJOR', 'MINOR', 'PATCH')) {
+                    if ($cache -notmatch "(?m)^CMAKE_CACHE_$($part)_VERSION:INTERNAL=(\d+)\r?$") { throw 'Cache CMake version is missing.' }
+                    $cacheVersion += $Matches[1]
+                }
+                $compilerRecord = Join-Path $BuildDirectory "CMakeFiles/$($cacheVersion -join '.')/CMake${language}Compiler.cmake"
+                $record = Get-Content -LiteralPath $compilerRecord -Raw
+                $recordPattern = '(?m)^set\(CMAKE_' + $language + '_COMPILER "([^"]+)"\)'
+                if ($record -notmatch $recordPattern) { throw 'Resolved cache compiler is missing.' }
+                $cachedCompiler = $Matches[1]
+            }
+            if ([IO.Path]::GetFullPath($cachedCompiler) -ine [IO.Path]::GetFullPath($compilerPath)) { throw 'Cache compiler differs from selected Visual Studio installation.' }
         }
     }
     Write-Host "Verified source $($inputs.ue4ssCommit), MSVC $compilerVersion, SDK $env:WindowsSDKVersion"
     if ($PreflightOnly) { return }
     Push-Location $root
     try {
-        Invoke-BuildCommand -Command 'cmake' -Arguments @('--preset', 'ninja-msvc-x64', '-B', $BuildDirectory, "-DPBZ_CONFIGURED_UE4SS_COMMIT=$($inputs.ue4ssCommit)")
+        $pwshPath = (Get-Command pwsh.exe -CommandType Application | Select-Object -First 1).Source
+        Invoke-BuildCommand -Command 'cmake' -Arguments @('--preset', 'ninja-msvc-x64', '-B', $BuildDirectory, "-DPBZ_PWSH=$pwshPath", "-DPBZ_CONFIGURED_UE4SS_COMMIT=$($inputs.ue4ssCommit)")
         if ($ConfigureOnly) { return }
         Invoke-BuildCommand -Command 'cmake' -Arguments @('--build', $BuildDirectory, '--parallel', "$Jobs", '--target', 'format-check', 'UE4SS', 'proxy', 'PBZEditor')
     } finally { Pop-Location }
@@ -155,6 +171,8 @@ try {
         sourceFiles=$sourceHashes; artifacts=$artifacts
     }
     $info | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $receipt -Encoding utf8NoBOM
+    $runtime = New-PBZRuntime -Root $root -BuildDirectory $BuildDirectory
+    Write-Host "Runtime assembled: $runtime"
     Write-Host "Build complete: $receipt"
 } catch {
     if (Test-Path -LiteralPath $receipt) { Remove-Item -LiteralPath $receipt -Force }
