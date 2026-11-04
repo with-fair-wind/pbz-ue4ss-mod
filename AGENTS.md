@@ -3,7 +3,8 @@
 This independent Phantom Blade Zero UE4SS C++ mod repository uses a root
 super-build: RE-UE4SS/, mods/PBZEditor/, scripts/, config/ and game-configs/.
 The approved pbz-palworld-layout plan supersedes the old nested PBZEditor layout
-and version-lock.json. Preserved files under .legacy are historical inputs only.
+and version-lock.json. The user removed the old .legacy and .omo directories; do not
+recreate those caches. The original devkit remains an optional historical reference.
 
 ## Ownership and source boundaries
 
@@ -68,7 +69,10 @@ and version-lock.json. Preserved files under .legacy are historical inputs only.
 - Cleanup removes only individually allowlisted files and nonrecursive empty
   directories. Never recursively delete fixture parents or old archives.
 - Record fresh commands, outcomes, hashes and artifacts under
-  .omo/evidence/pbz-palworld-layout. Old logs are historical, not proof of a new
-  build. Distinguish local validation from game-thread/UI verification.
+  .omo/evidence/pbz-palworld-layout for new work. This migration uses the original
+  devkit's .omo/evidence/pbz-palworld-layout after the user removed the target's
+  old evidence; only that evidence/staging subtree may be written in the devkit.
+  Old logs are historical, not proof of a new build. Distinguish local validation
+  from game-thread/UI verification.
 - Do not perform game installation or launch as an implicit build step. Keep
   unexecuted runtime scenarios explicitly unverified.
