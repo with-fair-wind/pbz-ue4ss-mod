@@ -43,6 +43,10 @@ All nine protected file hashes matched before and after deployment. The existing
 installation retained Keybinds and PBZEnvironmentProbe during these runs.
 The clean staging package contains PBZEditor and Keybinds.
 
+After the two cold starts, the old probe was removed. The original script, enable marker and
+`mods.txt` are backed up under `build/cleanup-backups/old-probe-2a441b5e987c46aeacf7e4263d813552/`.
+The installed load configuration now enables only Keybinds and PBZEditor. The two runs below preceded cleanup; a cold start with this minimal set remains to be verified.
+
 With Heybox closed, the new pair passed two cold starts. Each run passed the
 9,822-class self-test and displayed one PBZEditor tab. The first loaded the
 shrine save, dispatched the F8 probe on the game thread, and exited via Alt+F4.
