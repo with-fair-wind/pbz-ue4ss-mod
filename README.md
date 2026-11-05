@@ -5,8 +5,8 @@
 目前只有加载日志和 UE4SS GUI 验证页签，尚未实现血量、体力、背包等玩法功能。
 
 **当前状态（2026-11-05）**　本机游戏补丁 `CL-302256_JKS-17280`（Steam build `26367565`）
-已用原安装的 UE4SS 1195 完成启动、签名、自检和存档验证。退出时产生了异常转储。
-本地源码构建、运行目录组装和 31 项隔离部署测试已通过；新构建 DLL 的游戏内验收仍待执行。
+已用源码构建的 UE4SS 与 PBZEditor 完成两次冷启动和退出。两次均只出现一个 PBZEditor 页签，
+退出后进程结束，均无新增崩溃转储。存档加载、F8 游戏线程探针、Ctrl+O 打开与关闭 GUI，以及 31 项隔离部署测试均已通过。
 
 ## 目录和四类输入
 
@@ -45,7 +45,7 @@ Unreal 为 `56bd81252f9081e98928fb1eec5b5a07a820d70a`，PatternSleuth 为
 `experimental` 是 UE4SS 发布渠道；`Debug`、`Dev`、`Shipping` 是构建配置，`zDEV`
 是发行内容分类。本工程固定 `Game__Shipping__Win64`，该配置仍包含 GUI 和导出工具能力，
 不需要切换 Debug 才能显示 PBZEditor。框架运行时、代理和菜单均由源码构建，不使用预编译 ZIP
-替代构建验证；新产物的实际 GUI 行为仍须游戏验收。
+替代构建验证。下文记录了本机的游戏内验证结果。
 
 ## 初始化与源码构建
 
@@ -179,8 +179,23 @@ pwsh -NoProfile -File "$Project/tests/scripts/deploy_tests.ps1" -EvidenceDirecto
 F8 探针成功在游戏线程执行。此次导出生成了 3,967 个 C++ 头文件，六项缺少有效枚举值的 AI 属性被跳过。
 
 Alt+F4 后日志记录了事件循环结束。随后生成的转储记录一次读取访问异常，指令位于小黑盒的
-`UE4SSLocationLite.dll+0x2ea809`。根因及正常退出仍待验证。新构建 DLL 的两次冷启动、
-Ctrl+O 切换及存档验收尚待执行，此次试验也未测量帧时间或验证玩法接口。
+`UE4SSLocationLite.dll+0x2ea809`。
+
+随后通过日常部署脚本，仅替换了源码构建的 UE4SS 和 PBZEditor DLL。九个受保护文件的哈希均保持一致，
+包括原设置和既有的 Keybinds、PBZEnvironmentProbe。新组装包只包含 PBZEditor 与 Keybinds。
+本机恢复凭据为 `build/deploy-backups/02ac363805854af48cf37be63ce54ab9/receipt.json`。
+
+| 新 DLL 冷启动 | 游戏内验证 | 退出结果 |
+| --- | --- | --- |
+| 第一次 | 9,822 个类自检通过；单一 PBZEditor 页签；读入神龛存档，F8 探针在游戏线程执行 | Alt+F4 后记录事件循环结束，进程退出，无新增转储 |
+| 第二次 | 同一自检通过；在主菜单用 Ctrl+O 打开 GUI，确认单一页签，再用 Ctrl+O 关闭 | 在主菜单选择退出并按回车，事件循环结束，进程退出，无新增转储 |
+
+这两次运行都关闭了小黑盒，模块快照中均未发现先前转储涉及的小黑盒模块。运行时 DLL 也已更换，
+因此这组结果仍无法单独确定先前异常的根因。帧时间和玩法接口未测量或验证。
+
+上述 3,967 个头文件共 14,554,621 字节，保存在本机
+`build/dumps/CL-302256_JKS-17280-20261105-084806765/CXXHeaderDump/`。
+同目录的 `sdk-files.sha256.json` 记录逐文件哈希。对照归档逐项核验后，已移除游戏目录中的重复副本。
 
 旧根下 `.legacy` 和 `.omo` 已由用户清理，不依赖或重建旧缓存。原始 devkit 仍保留在
 `D:/code/cpp/palworld-ue4ss-mod/build/pbz-devkit`，历史 dump 位于其 `dump/20261101`；

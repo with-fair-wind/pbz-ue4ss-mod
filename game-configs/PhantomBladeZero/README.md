@@ -36,9 +36,26 @@ were outside this trial.
 
 After Alt+F4 the log recorded the event loop ending. A subsequent minidump
 reported a read access violation at `UE4SSLocationLite.dll+0x2ea809` in the
-Heybox Desktop installation. The root cause and clean exit still require
-verification. Two cold starts with the newly built DLL pair and the Ctrl+O
-toggle also await validation.
+Heybox Desktop installation.
+
+The daily deployment then replaced only UE4SS.dll and PBZEditor's main.dll.
+All nine protected file hashes matched before and after deployment. The existing
+installation retained Keybinds and PBZEnvironmentProbe during these runs.
+The clean staging package contains PBZEditor and Keybinds.
+
+With Heybox closed, the new pair passed two cold starts. Each run passed the
+9,822-class self-test and displayed one PBZEditor tab. The first loaded the
+shrine save, dispatched the F8 probe on the game thread, and exited via Alt+F4.
+The second opened and closed the GUI with Ctrl+O and exited from the main menu.
+Both logs recorded the event loop ending. Both processes terminated and neither
+run produced a new crash dump. The module snapshots lacked the previously
+observed Heybox hooks. Both the runtime binaries and the Heybox state changed
+between trials, so the earlier access violation's root cause remains open.
+
+The 3,967 exported headers (14,554,621 bytes) are archived locally under
+`build/dumps/CL-302256_JKS-17280-20261105-084806765/CXXHeaderDump/`, with a
+per-file SHA-256 manifest in its parent directory. The matching in-game copy
+was removed after verification.
 
 General runtime defaults belong in `config/UE4SS-settings.ini`, separate from
 this game profile. They derive from the pinned framework's settings with the
