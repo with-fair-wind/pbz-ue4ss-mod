@@ -120,20 +120,23 @@ function Save-PBZDeliveryReceipt([hashtable]$Receipt, [string]$Path) {
     $Receipt | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $Path -Encoding utf8NoBOM
 }
 
-function Restore-PBZFiles([hashtable]$Receipt, [string]$BackupDirectory) {
+function Restore-PBZFiles([hashtable]$Receipt, [string]$BackupDirectory, $Files, $Directories) {
     $errors = [Collections.Generic.List[string]]::new()
-    foreach ($item in $Receipt.files) {
+    foreach ($item in $Files) {
         $target = Join-Path $Receipt.destination $item.path
         try {
             if ($item.existed) {
                 Copy-PBZFile (Join-Path $BackupDirectory $item.backup) $target
                 Assert-PBZFile $target $item.originalHash
-            } elseif (Test-Path -LiteralPath $target) { Remove-Item -LiteralPath $target -Force }
+            } else {
+                if (Test-Path -LiteralPath $target) { [IO.File]::Delete($target) }
+                if (Test-Path -LiteralPath $target) { throw "Expected absent after restore: $target" }
+            }
         } catch { $errors.Add("$($item.path): $($_.Exception.Message)") }
         try { $item.actualHash = if (Test-Path -LiteralPath $target) { Get-PBZHash $target } else { 'absent' } }
         catch { $item.actualHash = 'unknown' }
     }
-    foreach ($directory in @($Receipt.createdDirectories | Sort-Object Length -Descending)) {
+    foreach ($directory in @($Directories | Sort-Object Length -Descending)) {
         try {
             if ((Test-Path -LiteralPath $directory) -and @(Get-ChildItem -LiteralPath $directory -Force).Count -eq 0) {
                 [IO.Directory]::Delete($directory, $false)
@@ -155,6 +158,7 @@ function Invoke-PBZDelivery {
         $receiptPath = [IO.Path]::GetFullPath($Restore)
         $backupDirectory = Split-Path $receiptPath -Parent
         if ((Split-Path $backupDirectory -Parent) -ine $backupRoot -or (Split-Path $receiptPath -Leaf) -cne 'receipt.json') { throw 'Restore requires a receipt inside this repository build/deploy-backups/<id>/.' }
+        Assert-PBZPaths @($receiptPath)
         $receipt = Get-Content -LiteralPath $receiptPath -Raw | ConvertFrom-Json -AsHashtable
         if ($receipt.schemaVersion -ne 1 -or $receipt.purpose -cne 'PBZ-delivery' -or $receipt.repository -ine $Root -or
             $receipt.mode -cnotin @('install', 'deploy')) { throw 'Invalid delivery receipt.' }
@@ -180,8 +184,11 @@ function Invoke-PBZDelivery {
             @(Compare-Object @($receipt.files.path | Sort-Object) @($allowed | Sort-Object)).Count) { throw 'Restore file allowlist mismatch.' }
         $index = 0
         foreach ($item in $receipt.files) {
-            if ($item.backup -cne "$index.bin" -or $item.existed -isnot [bool] -or
-                ($item.existed -and $item.originalHash -cnotmatch '^[0-9a-f]{64}$')) { throw 'Invalid backup entry.' }
+            if ($item.path -isnot [string] -or $item.path -cne $allowed[$index] -or
+                $item.backup -isnot [string] -or $item.backup -cne "$index.bin" -or
+                $item.existed -isnot [bool] -or -not $item.Contains('originalHash') -or
+                ($item.existed -and ($item.originalHash -isnot [string] -or $item.originalHash -cnotmatch '^[0-9a-f]{64}$')) -or
+                (-not $item.existed -and (-not $InitialInstall -or $null -ne $item.originalHash))) { throw 'Invalid backup entry.' }
             $paths += Join-Path $backupDirectory $item.backup
             $index++
         }
@@ -200,9 +207,13 @@ function Invoke-PBZDelivery {
     Assert-PBZUnlocked $targets
     if ($Restore) {
         foreach ($item in $receipt.files) {
-            if ($item.existed) { Assert-PBZFile (Join-Path $backupDirectory $item.backup) $item.originalHash }
+            $backup = Join-Path $backupDirectory $item.backup
+            if ($item.existed) {
+                if (-not (Test-Path -LiteralPath $backup -PathType Leaf)) { throw 'Missing original backup.' }
+                Assert-PBZFile $backup $item.originalHash
+            } elseif (Test-Path -LiteralPath $backup) { throw 'Unexpected backup for absent original.' }
         }
-        $ok = Restore-PBZFiles $receipt $backupDirectory
+        $ok = Restore-PBZFiles $receipt $backupDirectory $receipt.files $receipt.createdDirectories
         Save-PBZDeliveryReceipt $receipt $receiptPath
         if (-not $ok) { throw "Recovery incomplete; backups retained: $receiptPath" }
         return $receiptPath
@@ -234,6 +245,7 @@ function Invoke-PBZDelivery {
     foreach ($relative in $allowed) {
         $target = Join-Path $destination $relative
         $exists = Test-Path -LiteralPath $target
+        if (-not $InitialInstall -and -not $exists) { throw 'Daily deployment requires both originals.' }
         $originalHash = if ($exists) { Get-PBZHash $target } else { $null }
         if ($exists) {
             [IO.File]::Copy($target, (Join-Path $backupDirectory "$index.bin"), $false)
@@ -248,12 +260,20 @@ function Invoke-PBZDelivery {
         }
     }
     Save-PBZDeliveryReceipt $receipt $receiptPath
+    Assert-PBZStopped
+    Assert-PBZUnlocked $targets
+    $attempted = [Collections.Generic.List[object]]::new()
+    $directories = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
     try {
-        Assert-PBZStopped
-        Assert-PBZUnlocked $targets
         foreach ($item in $receipt.files) {
             $target = Join-Path $destination $item.path
+            $parent = Split-Path $target -Parent
+            while ($parent -in $receipt.createdDirectories -and -not (Test-Path -LiteralPath $parent)) {
+                $null = $directories.Add($parent)
+                $parent = Split-Path $parent -Parent
+            }
             [IO.Directory]::CreateDirectory((Split-Path $target -Parent)) | Out-Null
+            $attempted.Add($item)
             Copy-PBZFile (Join-Path $runtime $item.path) $target
             Assert-PBZFile $target $item.installedHash
             $item.actualHash = $item.installedHash
@@ -262,7 +282,7 @@ function Invoke-PBZDelivery {
         Save-PBZDeliveryReceipt $receipt $receiptPath
     } catch {
         $failure = $_.Exception.Message
-        $ok = Restore-PBZFiles $receipt $backupDirectory
+        $ok = Restore-PBZFiles $receipt $backupDirectory $attempted $directories
         Save-PBZDeliveryReceipt $receipt $receiptPath
         if (-not $ok) { throw "Delivery failed: $failure. Recovery incomplete; backups retained: $receiptPath" }
         throw "Delivery failed and original files restored: $failure. Receipt: $receiptPath"

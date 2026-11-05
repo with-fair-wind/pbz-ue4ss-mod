@@ -8,7 +8,23 @@ $fixture = Join-Path $root ('.qa-' + [Guid]::NewGuid().ToString('N').Substring(0
 $game = Join-Path $fixture 'game space'
 $destination = Join-Path $game 'platform/steam'
 $backupRoot = Join-Path $root 'build/deploy-backups'
-$initialBackups = @(Get-ChildItem -LiteralPath $backupRoot -Directory -ErrorAction SilentlyContinue | ForEach-Object Name)
+$ownedBackups = @{}
+$originalSave = ${function:Save-PBZDeliveryReceipt}
+$originalUnlock = ${function:Assert-PBZUnlocked}
+function Save-PBZDeliveryReceipt([hashtable]$Receipt, [string]$Path) {
+    if ($Receipt.status -eq 'prepared' -and $Receipt.installDirectory -ieq $game) {
+        $dir = Split-Path $Path -Parent
+        if ((Split-Path $dir -Parent) -ine $backupRoot -or (Split-Path $dir -Leaf) -cnotmatch '^[0-9a-f]{32}$') {
+            throw 'Invalid fixture backup directory.'
+        }
+        # Cleanup uses only filenames bounded by the operation that created the backup.
+        $count = if ($Receipt.mode -eq 'install') { $runtimeFiles.Count } else { 2 }
+        $ownedBackups[$dir] = @(for ($i = 0; $i -lt $count; $i++) {
+            if ($Receipt.files[$i].existed) { "$i.bin" }
+        })
+    }
+    & $originalSave $Receipt $Path
+}
 $cases = [Collections.Generic.List[object]]::new()
 $ownedFiles = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
 $originalCopy = ${function:Copy-PBZFile}
@@ -18,8 +34,31 @@ function Get-PBZGameVersion([string]$Executable) {
     if (-not (Test-Path -LiteralPath $Executable -PathType Leaf)) { throw 'Fixture executable missing.' }
     return $script:version
 }
+function Assert-FixturePath([string]$Base, [string]$Path) {
+    $full = [IO.Path]::GetFullPath($Path)
+    if (-not $full.StartsWith([IO.Path]::GetFullPath($Base) + '\', [StringComparison]::OrdinalIgnoreCase)) {
+        throw "Cleanup bounds failed: $full"
+    }
+    Assert-PBZPaths @($full)
+}
+function Remove-FixtureFile([string]$Base, [string]$Path) {
+    Assert-FixturePath $Base $Path
+    if (Test-Path -LiteralPath $Path) { [IO.File]::Delete($Path); $deleted.Add($Path) }
+}
+function Remove-FixtureBackup([string]$Directory) {
+    if (-not $ownedBackups.ContainsKey($Directory)) { throw 'Unowned backup directory.' }
+    Assert-FixturePath $backupRoot $Directory
+    $files = @('receipt.json') + $ownedBackups[$Directory]
+    foreach ($name in $files) { Assert-FixturePath $Directory (Join-Path $Directory $name) }
+    foreach ($name in $files) { Remove-FixtureFile $Directory (Join-Path $Directory $name) }
+    if ((Test-Path -LiteralPath $Directory) -and @(Get-ChildItem -LiteralPath $Directory -Force).Count -eq 0) {
+        [IO.Directory]::Delete($Directory, $false)
+        $removedDirectories.Add($Directory)
+    }
+}
 function Put([string]$Relative, [string]$Text) {
     $path = Join-Path $destination $Relative
+    Assert-FixturePath $fixture $path
     [IO.Directory]::CreateDirectory((Split-Path $path -Parent)) | Out-Null
     [IO.File]::WriteAllText($path, $Text)
     $null = $ownedFiles.Add($path)
@@ -42,13 +81,18 @@ function Assert-Old {
     Check (([IO.File]::ReadAllText((Join-Path $destination 'ue4ss/UE4SS.dll'))) -ceq 'old-runtime') 'Runtime was not restored'
     Check (([IO.File]::ReadAllText((Join-Path $destination 'ue4ss/Mods/PBZEditor/dlls/main.dll'))) -ceq 'old-mod') 'Mod was not restored'
 }
-$sentinel = Join-Path $root '.omo/task-5-sentinel.txt'
+$sentinel = Join-Path $fixture 'outside-game-sentinel.txt'
 $sourceSentinel = Join-Path $root 'mods/PBZEditor/src/dllmain.cpp'
 $sourceHash = Get-PBZHash $sourceSentinel
-if (Test-Path -LiteralPath $sentinel) { throw 'Sentinel collision' }
+Assert-FixturePath $root $fixture
+Assert-FixturePath $fixture $sentinel
+if (Test-Path -LiteralPath $fixture) { throw 'Fixture collision' }
 [IO.Directory]::CreateDirectory((Split-Path $sentinel -Parent)) | Out-Null
 [IO.File]::WriteAllText($sentinel, 'outside fixture preservation')
 $sentinelHash = Get-PBZHash $sentinel
+$null = $ownedFiles.Add($sentinel)
+$deleted = [Collections.Generic.List[string]]::new()
+$removedDirectories = [Collections.Generic.List[string]]::new()
 $cleanup = @{}
 try {
     Assert-PBZPaths @($fixture, $sentinel)
@@ -109,13 +153,13 @@ try {
         foreach ($relative in $stable.Keys) { Check ((Get-PBZHash (Join-Path $destination $relative)) -ceq $stable[$relative]) "Daily changed $relative" }
     }
     Case 'daily missing marker refuses before writes' {
-        Remove-Item -LiteralPath (Join-Path $destination 'ue4ss/Mods/PBZEditor/enabled.txt')
+        Remove-FixtureFile $fixture (Join-Path $destination 'ue4ss/Mods/PBZEditor/enabled.txt')
         Expect-Failure { Deliver } 'Install the full runtime first' | Out-Null
         Assert-Old
         Put 'ue4ss/Mods/PBZEditor/enabled.txt' ''
     }
     Case 'daily missing mod DLL refuses before writes' {
-        Remove-Item -LiteralPath (Join-Path $destination 'ue4ss/Mods/PBZEditor/dlls/main.dll')
+        Remove-FixtureFile $fixture (Join-Path $destination 'ue4ss/Mods/PBZEditor/dlls/main.dll')
         Expect-Failure { Deliver } 'Install the full runtime first' | Out-Null
         Check (([IO.File]::ReadAllText((Join-Path $destination 'ue4ss/UE4SS.dll'))) -ceq 'old-runtime') 'Missing mod changed runtime'
         Put 'ue4ss/Mods/PBZEditor/dlls/main.dll' 'old-mod'
@@ -150,7 +194,8 @@ try {
         }
         Expect-Failure { Deliver } 'Recovery incomplete' | Out-Null
         Check ($script:hit -eq 1 -and $script:remaining -eq 1) 'Restore stopped before remaining item'
-        $latest = Get-ChildItem $backupRoot -Filter receipt.json -Recurse | Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1
+        $latest = $ownedBackups.Keys | ForEach-Object { Get-Item -LiteralPath (Join-Path $_ 'receipt.json') } |
+            Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1
         $r = Get-Content $latest.FullName -Raw | ConvertFrom-Json
         Check ($r.status -eq 'restore-failed' -and $r.restoreErrors.Count -eq 1) 'Recovery status missing'
         Check ($r.files[0].actualHash -eq (Get-PBZHash (Join-Path $destination 'ue4ss/UE4SS.dll'))) 'Actual state not recorded'
@@ -223,17 +268,26 @@ try {
     }
     Case 'reparse game ancestor refuses before writes' {
         $link = Join-Path $fixture 'linked game'
+        Assert-FixturePath $fixture $link
         New-Item -ItemType Junction -Path $link -Target $game | Out-Null
         try { Expect-Failure { Invoke-PBZDelivery -Root $root -InstallDirectory $link } 'Reparse paths' | Out-Null; Assert-Old }
-        finally { [IO.Directory]::Delete($link, $false) }
+        finally {
+            Assert-FixturePath $root (Split-Path $link -Parent)
+            $junction = Get-Item -LiteralPath $link -Force
+            Check ($junction.LinkType -eq 'Junction' -and $junction.Target -ieq $game) 'Unexpected fixture link'
+            [IO.Directory]::Delete($link, $false)
+            $removedDirectories.Add($link)
+        }
     }
     Case 'unexpected staged file is preserved and refused' {
         $path = Join-Path $runtime 'unexpected.txt'
+        Assert-FixturePath $runtime $path
+        if (Test-Path -LiteralPath $path) { throw 'Staging sentinel collision' }
         [IO.File]::WriteAllText($path, 'keep')
         try {
             Expect-Failure { New-PBZRuntime $root '' } 'Unexpected staging file preserved' | Out-Null
             Check (([IO.File]::ReadAllText($path)) -ceq 'keep') 'Unknown staging file changed'
-        } finally { Remove-Item -LiteralPath $path }
+        } finally { Remove-FixtureFile $runtime $path }
     }
     Case 'CLI real version check and missing receipt exit nonzero' {
         foreach ($script in @('deploy.ps1', 'install-runtime.ps1')) {
@@ -244,39 +298,138 @@ try {
         & pwsh -NoProfile -File (Join-Path $root 'scripts/deploy.ps1') -Restore (Join-Path $fixture 'receipt.json') *> (Join-Path $EvidenceDirectory 'task-5-cli-restore.log')
         Check ($LASTEXITCODE -ne 0) 'CLI accepted outside receipt'
     }
-    Check ($cases.Count -eq 24) "Unexpected scenario count $($cases.Count)"
+    foreach ($boundary in @('process', 'lock')) {
+        Case "final $boundary refusal leaves both targets untouched" {
+            $script:checks = 0
+            $script:writes = 0
+            function Copy-PBZFile($Source, $Destination) {
+                $script:writes++
+                & $originalCopy $Source $Destination
+            }
+            if ($boundary -eq 'process') {
+                function Assert-PBZStopped {
+                    if (++$script:checks -eq 2) { throw 'fixture final process refusal' }
+                }
+            } else {
+                function Assert-PBZUnlocked($Paths) {
+                    if (++$script:checks -eq 2) {
+                        $handle = [IO.File]::Open($Paths[1], 'Open', 'ReadWrite', 'None')
+                        try { & $originalUnlock $Paths } finally { $handle.Dispose() }
+                    } else { & $originalUnlock $Paths }
+                }
+            }
+            Expect-Failure { Deliver } 'final process refusal|used by another process' | Out-Null
+            Check ($script:checks -eq 2 -and $script:writes -eq 0) 'Final refusal wrote a target'
+            Assert-Old
+        }
+    }
+    Case 'partial first copy restores only attempted target' {
+        $script:restored = [Collections.Generic.List[string]]::new()
+        $script:hit = 0
+        function Copy-PBZFile($Source, $Destination) {
+            if ($Source -like '*build\runtime\*') {
+                [IO.File]::WriteAllText($Destination, 'partial')
+                $script:hit++
+                throw 'injected partial first swap'
+            }
+            $script:restored.Add($Source)
+            & $originalCopy $Source $Destination
+        }
+        Expect-Failure { Deliver } 'original files restored' | Out-Null
+        Check ($script:hit -eq 1 -and $script:restored.Count -eq 1 -and $script:restored[0] -like '*0.bin') 'Wrong rollback subset'
+        Assert-Old
+    }
+    foreach ($index in @(0, 1)) {
+        Case "malformed daily entry $index refuses entire pair" {
+            $receipt = Deliver
+            $pristine = Get-Content $receipt -Raw
+            $r = $pristine | ConvertFrom-Json -AsHashtable
+            $expected = @($r.files | ForEach-Object { Get-PBZHash (Join-Path $destination $_.path) })
+            $script:writes = 0
+            function Copy-PBZFile($Source, $Destination) { $script:writes++; & $originalCopy $Source $Destination }
+            try {
+                foreach ($invalid in @('flag', 'absent', 'name', 'hash')) {
+                    $r = $pristine | ConvertFrom-Json -AsHashtable
+                    $item = $r.files[$index]
+                    switch ($invalid) {
+                        'flag' { $item.existed = $false }
+                        'absent' { $item.existed = $false; $item.originalHash = $null }
+                        'name' { $item.backup = '../sentinel' }
+                        'hash' { $item.originalHash = '0' * 64 }
+                    }
+                    Save-PBZDeliveryReceipt $r $receipt
+                    Expect-Failure { Invoke-PBZDelivery -Root $root -Restore $receipt } 'Invalid backup entry|Readback mismatch' | Out-Null
+                    for ($i = 0; $i -lt 2; $i++) {
+                        Check ((Get-PBZHash (Join-Path $destination $r.files[$i].path)) -ceq $expected[$i]) 'Malformed receipt changed pair'
+                    }
+                    Check ($script:writes -eq 0) 'Malformed restore reached target writer'
+                }
+            } finally { [IO.File]::WriteAllText($receipt, $pristine) }
+            Invoke-PBZDelivery -Root $root -Restore $receipt | Out-Null
+            Assert-Old
+        }
+    }
+    Case 'install absence conflicts with a numbered backup before any restore' {
+        $receipt = Invoke-PBZDelivery -Root $root -InstallDirectory $game -InitialInstall
+        $pristine = Get-Content $receipt -Raw
+        $r = $pristine | ConvertFrom-Json -AsHashtable
+        $item = $r.files[-1]
+        Check $item.existed 'Expected numbered backup for present original'
+        $item.existed = $false
+        $item.originalHash = $null
+        Save-PBZDeliveryReceipt $r $receipt
+        try {
+            Expect-Failure { Invoke-PBZDelivery -Root $root -Restore $receipt } 'Unexpected backup for absent original' | Out-Null
+            foreach ($file in $r.files) { Assert-PBZFile (Join-Path $destination $file.path) $file.installedHash }
+        } finally { [IO.File]::WriteAllText($receipt, $pristine) }
+        Invoke-PBZDelivery -Root $root -Restore $receipt | Out-Null
+        Assert-Old
+    }
+    Case 'malicious cleanup receipt cannot escape or delete an unknown entry' {
+        $receipt = Deliver
+        $dir = Split-Path $receipt -Parent
+        Invoke-PBZDelivery -Root $root -Restore $receipt | Out-Null
+        $r = Get-Content $receipt -Raw | ConvertFrom-Json -AsHashtable
+        $r.files[0].backup = [IO.Path]::GetRelativePath($dir, $sentinel)
+        Save-PBZDeliveryReceipt $r $receipt
+        $unknown = Join-Path $dir 'unknown.txt'
+        Assert-FixturePath $dir $unknown
+        [IO.File]::WriteAllText($unknown, 'unknown')
+        Remove-FixtureBackup $dir
+        Check ((Get-PBZHash $sentinel) -ceq $sentinelHash -and [IO.File]::ReadAllText($unknown) -ceq 'unknown') 'Cleanup removed foreign content'
+        Check (-not (Test-Path $receipt) -and -not (Test-Path (Join-Path $dir '0.bin'))) 'Owned files survived cleanup'
+        Remove-FixtureFile $dir $unknown
+    }
+    Check ($cases.Count -eq 31) "Unexpected scenario count $($cases.Count)"
     Check ((Get-PBZHash (Join-Path $destination 'ue4ss/Mods/Other/sentinel.txt')) -ceq $otherHash) 'Other mod changed'
     Check ((Get-PBZHash $sentinel) -ceq $sentinelHash -and (Get-PBZHash $sourceSentinel) -ceq $sourceHash) 'Outside sentinel changed'
     @{status='PASS'; scenarios=$cases.ToArray(); invocation='pwsh -NoProfile -File tests/scripts/deploy_tests.ps1 -EvidenceDirectory <E>'; game='not touched'} | ConvertTo-Json -Depth 8 | Set-Content (Join-Path $EvidenceDirectory 'task-5-deploy-tests.json') -Encoding utf8NoBOM
 } finally {
-    # Delete only this invocation's allowlisted files; unknown entries keep their parent alive.
-    $deleted = [Collections.Generic.List[string]]::new()
+    $sentinelUnchanged = (Get-PBZHash $sentinel) -ceq $sentinelHash
     $directories = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
-    Assert-PBZPaths @($ownedFiles)
     foreach ($path in $ownedFiles) {
-        if (-not $path.StartsWith($fixture + '\', [StringComparison]::OrdinalIgnoreCase)) { throw 'Cleanup bounds failed' }
-        if (Test-Path -LiteralPath $path) { Remove-Item -LiteralPath $path -Force; $deleted.Add($path) }
+        Assert-FixturePath $fixture $path
         $parent = Split-Path $path -Parent
-        while ($parent.Length -ge $fixture.Length) { $null = $directories.Add($parent); $parent = Split-Path $parent -Parent }
-    }
-    foreach ($backup in @(Get-ChildItem -LiteralPath $backupRoot -Directory -ErrorAction SilentlyContinue | Where-Object Name -NotIn $initialBackups)) {
-        $receiptPath = Join-Path $backup.FullName 'receipt.json'
-        if (-not (Test-Path $receiptPath)) { continue }
-        $r = Get-Content $receiptPath -Raw | ConvertFrom-Json
-        if ($r.installDirectory -ine $game) { continue }
-        foreach ($item in $r.files) {
-            $path = Join-Path $backup.FullName $item.backup
-            if (Test-Path -LiteralPath $path) { Remove-Item -LiteralPath $path; $deleted.Add($path) }
+        while ($parent -ine $fixture) {
+            Assert-FixturePath $fixture $parent
+            $null = $directories.Add($parent)
+            $parent = Split-Path $parent -Parent
         }
-        Remove-Item -LiteralPath $receiptPath
-        $deleted.Add($receiptPath)
-        $null = $directories.Add($backup.FullName)
     }
-    Assert-PBZPaths @($directories)
-    foreach ($directory in @($directories | Sort-Object Length -Descending)) {
-        if ((Test-Path -LiteralPath $directory) -and @(Get-ChildItem -LiteralPath $directory -Force).Count -eq 0) { [IO.Directory]::Delete($directory, $false) }
+    foreach ($path in $ownedFiles) { Remove-FixtureFile $fixture $path }
+    foreach ($dir in $ownedBackups.Keys) { Remove-FixtureBackup $dir }
+    $null = $directories.Add($fixture)
+    foreach ($dir in @($directories | Sort-Object Length -Descending)) {
+        Assert-FixturePath $root $dir
+        if ((Test-Path -LiteralPath $dir) -and @(Get-ChildItem -LiteralPath $dir -Force).Count -eq 0) {
+            [IO.Directory]::Delete($dir, $false)
+            $removedDirectories.Add($dir)
+        }
     }
-    $cleanup = @{ fixture=$fixture; fixtureRemoved=(-not (Test-Path $fixture)); removedFiles=$deleted.ToArray(); sourceSentinelUnchanged=((Get-PBZHash $sourceSentinel) -ceq $sourceHash); evidenceSentinelUnchanged=((Get-PBZHash $sentinel) -ceq $sentinelHash) }
+    $cleanup = @{
+        fixture=$fixture; fixtureRemoved=(-not (Test-Path $fixture)); removedFiles=$deleted.ToArray()
+        removedDirectories=$removedDirectories.ToArray(); ownedBackupDirectories=@($ownedBackups.Keys)
+        sourceSentinelUnchanged=((Get-PBZHash $sourceSentinel) -ceq $sourceHash); evidenceSentinelUnchanged=$sentinelUnchanged
+    }
     $cleanup | ConvertTo-Json -Depth 5 | Set-Content (Join-Path $EvidenceDirectory 'task-5-cleanup.json') -Encoding utf8NoBOM
-    Remove-Item -LiteralPath $sentinel
 }
