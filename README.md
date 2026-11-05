@@ -4,10 +4,9 @@
 从固定源码构建 UE4SS、代理 `dwmapi.dll` 和 `PBZEditor.dll`。PBZEditor 0.1.0
 目前只有加载日志和 UE4SS GUI 验证页签，尚未实现血量、体力、背包等玩法功能。
 
-**当前状态（2026-11-04）：** 本地源码构建、运行目录组装和 31 项隔离部署测试已通过；
-新工程构建产物尚未进行游戏内验收。适配基线是 `CL-301524_JKS-17219`，本机游戏
-已读到 `CL-302256_JKS-17280`，因此安装/部署会拒绝当前游戏。需要另行完成新版兼容性
-验证，不能通过修改版本字符串或跳过守卫来宣称兼容。
+**当前状态（2026-11-05）**　本机游戏补丁 `CL-302256_JKS-17280`（Steam build `26367565`）
+已用原安装的 UE4SS 1195 完成启动、签名、自检和存档验证。退出时产生了异常转储。
+本地源码构建、运行目录组装和 31 项隔离部署测试已通过；新构建 DLL 的游戏内验收仍待执行。
 
 ## 目录和四类输入
 
@@ -39,9 +38,9 @@ Unreal 为 `56bd81252f9081e98928fb1eec5b5a07a820d70a`，PatternSleuth 为
 [适配说明](game-configs/PhantomBladeZero/README.md) 与
 [manifest](game-configs/PhantomBladeZero/manifest.json)。三文件已入库，正常构建不需要旧 ZIP。
 
-适配记录的基线是 Steam App `4115450` / build `26266538`、`PBZ.exe` FileVersion
-`CL-301524_JKS-17219`。`testedUE4SSCommit` 表示继承的适配基线，不代表本工程已完成新游戏实测。
-当前版本不同、适配哈希不符或 gitlink 不匹配时，脚本拒绝部署。
+发布者适配包记录的是 Steam App `4115450`、build `26266538`（`CL-301524_JKS-17219`）。
+当前项目清单记录本机实测的 build `26367565`（`CL-302256_JKS-17280`）及实测框架提交。
+游戏 FileVersion、适配文件哈希或框架 gitlink 不匹配时，脚本拒绝部署。
 
 `experimental` 是 UE4SS 发布渠道；`Debug`、`Dev`、`Shipping` 是构建配置，`zDEV`
 是发行内容分类。本工程固定 `Game__Shipping__Win64`，该配置仍包含 GUI 和导出工具能力，
@@ -117,7 +116,6 @@ Keybinds 包含手动对象/头文件导出快捷键，不自动导出，也不�
 
 以下命令仅适用于完成兼容验证且版本守卫接受的游戏。**先完全退出 PBZ**。
 `-InstallDirectory` 是包含 `platform/steam/PBZ.exe` 的游戏根，不是 `platform/steam` 子目录。
-当前本机新版游戏尚不满足版本条件。
 
 ```powershell
 $Project = 'D:/code/cpp/pbz-ue4ss-mod'
@@ -176,10 +174,13 @@ pwsh -NoProfile -File "$Project/tests/scripts/deploy_tests.ps1" -EvidenceDirecto
 原字节，请不要同时构建或编辑。清理按本次操作登记的编号删除备份，只移除空目录，并检查源码及模拟游戏外的哨兵文件
 不变。通过证据为退出码 0、31 个具名 PASS、`task-5-deploy-tests.json` 和 `task-5-cleanup.json`。
 
-本次本地验收已重新运行该套件，并独立核对 11 个组装文件、三个 DLL、源文件、配置与 profile 哈希、
-递归依赖提交和清理结果。构建凭据证明本地源码产物，历史游戏日志不证明这些新 DLL 可用。
-新版游戏兼容性、两次冷启动、单一 PBZEditor 页签、Ctrl+O/Keybinds、进入存档和正常退出均待真实
-游戏验证；当前不宣称这些场景通过。
+在本机新版游戏上，原安装的运行时加载了布局文件，解析了 GUObjectArray 和 GNatives，
+通过了含 9,822 个类的对象哈希表自检。GUI 显示一个 PBZEditor 页签；进入存档后，
+F8 探针成功在游戏线程执行。此次导出生成了 3,967 个 C++ 头文件，六项缺少有效枚举值的 AI 属性被跳过。
+
+Alt+F4 后日志记录了事件循环结束。随后生成的转储记录一次读取访问异常，指令位于小黑盒的
+`UE4SSLocationLite.dll+0x2ea809`。根因及正常退出仍待验证。新构建 DLL 的两次冷启动、
+Ctrl+O 切换及存档验收尚待执行，此次试验也未测量帧时间或验证玩法接口。
 
 旧根下 `.legacy` 和 `.omo` 已由用户清理，不依赖或重建旧缓存。原始 devkit 仍保留在
 `D:/code/cpp/palworld-ue4ss-mod/build/pbz-devkit`，历史 dump 位于其 `dump/20261101`；

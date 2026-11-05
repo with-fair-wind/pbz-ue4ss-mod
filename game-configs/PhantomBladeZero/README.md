@@ -20,15 +20,25 @@ These files describe engine integration, not health, stamina, inventory or other
 
 ## Compatibility
 
-The recorded baseline is Steam App 4115450, build 26266538,
-`PBZ.exe` FileVersion `CL-301524_JKS-17219`, with official UE4SS commit
-`1ceefac8b8c286f0fb3eb62b4aae075ff81df0bd`.
-This is an inherited adaptation baseline, not a new runtime test of this project.
-The parent repository's `RE-UE4SS` gitlink selects framework source;
-`testedUE4SSCommit` records this profile's compatibility baseline.
-Deployment must refuse unknown game versions, mismatched profile hashes, or a
-framework gitlink that differs from this baseline until explicitly revalidated.
-Neither a dump nor the historical file comments establish compatibility with future updates.
+The publisher's three files identify Steam App 4115450, build 26266538,
+`PBZ.exe` FileVersion `CL-301524_JKS-17219`. The local profile now targets
+build 26367565, FileVersion `CL-302256_JKS-17280`. The parent gitlink and
+`testedUE4SSCommit` both select `1ceefac8b8c286f0fb3eb62b4aae075ff81df0bd`.
+Deployment checks the game FileVersion, profile hashes and framework gitlink.
+
+On 2026-11-05 the previously installed UE4SS 1195 runtime loaded the layout
+and resolved both signatures on build 26367565. Its hash-table self-test
+passed for 9,822 classes with instances. One PBZEditor tab appeared, a save
+loaded, and the existing F8 probe logged a successful game-thread dispatch.
+The C++ header export produced 3,967 files in 2.85 seconds. It omitted six
+AI enum properties with invalid enum values. Gameplay APIs and frame times
+were outside this trial.
+
+After Alt+F4 the log recorded the event loop ending. A subsequent minidump
+reported a read access violation at `UE4SSLocationLite.dll+0x2ea809` in the
+Heybox Desktop installation. The root cause and clean exit still require
+verification. Two cold starts with the newly built DLL pair and the Ctrl+O
+toggle also await validation.
 
 General runtime defaults belong in `config/UE4SS-settings.ini`, separate from
 this game profile. They derive from the pinned framework's settings with the

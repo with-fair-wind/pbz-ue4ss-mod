@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
-  "gameFileVersion": "CL-301524_JKS-17219",
+  "gameFileVersion": "CL-302256_JKS-17280",
   "steamAppId": 4115450,
-  "steamBuildId": 26266538,
+  "steamBuildId": 26367565,
   "testedUE4SSCommit": "1ceefac8b8c286f0fb3eb62b4aae075ff81df0bd",
   "sourcePackage": {
     "url": "https://github.com/KintaroModding/ue4ss/releases/tag/v3.0.1-1195-g1ceefac8",

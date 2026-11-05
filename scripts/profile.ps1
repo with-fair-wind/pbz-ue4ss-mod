@@ -6,8 +6,8 @@ function Get-PBZProfile {
     $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json -AsHashtable
     $keys = @('schemaVersion', 'gameFileVersion', 'steamAppId', 'steamBuildId', 'testedUE4SSCommit', 'sourcePackage', 'files')
     if (@(Compare-Object @($manifest.Keys | Sort-Object) @($keys | Sort-Object)).Count -or
-        $manifest.schemaVersion -ne 1 -or $manifest.gameFileVersion -ne 'CL-301524_JKS-17219' -or
-        $manifest.steamAppId -ne 4115450 -or $manifest.steamBuildId -ne 26266538) { throw 'Unsupported PBZ profile schema or game baseline.' }
+        $manifest.schemaVersion -ne 1 -or $manifest.gameFileVersion -ne 'CL-302256_JKS-17280' -or
+        $manifest.steamAppId -ne 4115450 -or $manifest.steamBuildId -ne 26367565) { throw 'Unsupported PBZ profile schema or game baseline.' }
     if (@(Compare-Object @($manifest.sourcePackage.Keys | Sort-Object) @('sha256', 'url')).Count -or
         $manifest.sourcePackage.sha256 -cnotmatch '^[0-9a-f]{64}$' -or
         $manifest.sourcePackage.url -notmatch '^https://github.com/KintaroModding/ue4ss/releases/tag/') { throw 'Invalid profile source package.' }
