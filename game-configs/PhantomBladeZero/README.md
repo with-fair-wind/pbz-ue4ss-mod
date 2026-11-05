@@ -45,7 +45,7 @@ The clean staging package contains PBZEditor and Keybinds.
 
 After the two cold starts, the old probe was removed. The original script, enable marker and
 `mods.txt` are backed up under `build/cleanup-backups/old-probe-2a441b5e987c46aeacf7e4263d813552/`.
-The installed load configuration now enables only Keybinds and PBZEditor. The two runs below preceded cleanup; a cold start with this minimal set remains to be verified.
+The two runs below preceded cleanup. A third cold start loaded only Keybinds and PBZEditor, passed the 9,822-class self-test, and showed one PBZEditor tab when Ctrl+O opened the GUI. The process exited after Alt+F4 with no new crash dump.
 
 With Heybox closed, the new pair passed two cold starts. Each run passed the
 9,822-class self-test and displayed one PBZEditor tab. The first loaded the

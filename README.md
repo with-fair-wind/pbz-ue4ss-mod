@@ -186,7 +186,7 @@ Alt+F4 后日志记录了事件循环结束。随后生成的转储记录一次�
 本机恢复凭据为 `build/deploy-backups/02ac363805854af48cf37be63ce54ab9/receipt.json`。
 
 两次冷启动完成后，已备份并移除旧验证探针。原始脚本、启用标记和清理前的 `mods.txt` 保存在
-`build/cleanup-backups/old-probe-2a441b5e987c46aeacf7e4263d813552/`。清理后的加载配置只启用 Keybinds 和 PBZEditor；下表记录的是清理前的两次运行，最小启用集合的额外冷启动仍待确认。
+`build/cleanup-backups/old-probe-2a441b5e987c46aeacf7e4263d813552/`。下表记录清理前的两次运行。清理后的第三次冷启动仅加载 Keybinds 和 PBZEditor，9,822 个类自检通过。Ctrl+O 打开 GUI 后可见一个 PBZEditor 页签；按 Alt+F4 后进程退出，无新增崩溃转储。
 
 | 新 DLL 冷启动 | 游戏内验证 | 退出结果 |
 | --- | --- | --- |
