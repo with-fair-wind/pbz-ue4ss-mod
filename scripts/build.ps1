@@ -45,6 +45,45 @@ function Assert-BuildCache {
     }
 }
 
+function Assert-MsvcDependencyPrefix {
+    param([string]$BuildDirectory)
+    $rules = Join-Path $BuildDirectory 'CMakeFiles/rules.ninja'
+    $expectedFile = Join-Path $BuildDirectory 'CMakeFiles/PBZShowIncludes/prefix.bin'
+    if (-not (Test-Path -LiteralPath $rules) -or -not (Test-Path -LiteralPath $expectedFile)) {
+        throw 'MSVC include prefix has not been verified. Preserve this cache and choose a fresh BuildDirectory.'
+    }
+    # Latin1 maps each byte to one character without changing localized compiler output.
+    $bytes = [Text.Encoding]::Latin1
+    $expected = $bytes.GetString([IO.File]::ReadAllBytes($expectedFile))
+    $prefixes = [regex]::Matches($bytes.GetString([IO.File]::ReadAllBytes($rules)), '(?m)^msvc_deps_prefix = ([^\r\n]*)')
+    if (-not $expected -or $prefixes.Count -eq 0) { throw 'Missing MSVC dependency prefix.' }
+    foreach ($prefix in $prefixes) {
+        if ($prefix.Groups[1].Value -cne $expected) {
+            throw 'Ninja include prefix differs from the compiler bytes. Preserve this cache and choose a fresh BuildDirectory.'
+        }
+    }
+}
+function Assert-ModHeaderDependencies {
+    param([string]$BuildDirectory)
+    foreach ($object in @(
+        'mods/PBZEditor/CMakeFiles/PBZEditor.dir/src/dllmain.cpp.obj',
+        'mods/PBZEditor/CMakeFiles/PBZEditor.dir/src/items/item_runtime.cpp.obj',
+        'mods/PBZEditor/CMakeFiles/PBZEditor.dir/src/items/item_ui.cpp.obj',
+        'mods/PBZEditor/CMakeFiles/PBZItemTests.dir/tests/item_tests.cpp.obj')) {
+        $dependencies = @(& ninja -C $BuildDirectory -t deps $object 2>&1)
+        if ($LASTEXITCODE -ne 0) { throw "Cannot verify header dependencies: $object" }
+        $text = ($dependencies -join "`n").Replace('\', '/').ToLowerInvariant()
+        if ($text -notmatch '#deps [1-9][0-9]*' -or
+            -not $text.Contains('mods/pbzeditor/inc/items/item_editor.hpp')) {
+            throw "Header dependency tracking failed: $object. No build receipt will be issued."
+        }
+        if ($object -match '(dllmain|item_runtime)\.cpp\.obj$' -and
+            -not $text.Contains('mods/pbzeditor/src/items/item_runtime.hpp')) {
+            throw "Runtime layout header is missing from dependencies: $object"
+        }
+    }
+    Write-Host 'Verified MSVC header dependencies for mod and test consumers.'
+}
 function Invoke-BuildCommand {
     param([Parameter(Mandatory)][string]$Command, [string[]]$Arguments = @())
     $git = (Get-Command git.exe -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
@@ -62,9 +101,7 @@ function Invoke-BuildCommand {
 function Get-BuildSourceHashes {
     param([string]$Root)
     $hashes = [ordered]@{}
-    foreach ($relative in @('CMakeLists.txt', 'CMakePresets.json', 'cmake/PBZTooling.cmake',
-        'mods/CMakeLists.txt', 'mods/PBZEditor/CMakeLists.txt', 'mods/PBZEditor/src/dllmain.cpp',
-        'scripts/build.ps1', 'scripts/setup.ps1', 'scripts/profile.ps1', 'scripts/runtime.ps1', '.clang-format')) {
+    foreach ($relative in Get-PBZBuildSources $Root) {
         $hashes[$relative] = (Get-FileHash -LiteralPath (Join-Path $Root $relative)).Hash.ToLowerInvariant()
     }
     return $hashes
@@ -106,6 +143,10 @@ try {
     $bashPath = Join-Path (Split-Path (Split-Path (Split-Path (& $git --exec-path) -Parent) -Parent) -Parent) 'bin/bash.exe'
     if (-not (Test-Path -LiteralPath $bashPath)) { throw 'Git for Windows Bash is required.' }
     Assert-BuildCache -BuildDirectory $BuildDirectory
+    if (Test-Path -LiteralPath (Join-Path $BuildDirectory 'mods/PBZEditor/CMakeFiles/PBZEditor.dir/src/dllmain.cpp.obj')) {
+        Assert-MsvcDependencyPrefix -BuildDirectory $BuildDirectory
+        Assert-ModHeaderDependencies -BuildDirectory $BuildDirectory
+    }
     $cachePath = Join-Path $BuildDirectory 'CMakeCache.txt'
     if (Test-Path -LiteralPath $cachePath) {
         $cache = Get-Content -LiteralPath $cachePath -Raw
@@ -144,8 +185,11 @@ try {
     try {
         $pwshPath = (Get-Command pwsh.exe -CommandType Application | Select-Object -First 1).Source
         Invoke-BuildCommand -Command 'cmake' -Arguments @('--preset', 'ninja-msvc-x64', '-B', $BuildDirectory, "-DPBZ_PWSH=$pwshPath", "-DPBZ_CONFIGURED_UE4SS_COMMIT=$($inputs.ue4ssCommit)")
+        Assert-MsvcDependencyPrefix -BuildDirectory $BuildDirectory
         if ($ConfigureOnly) { return }
-        Invoke-BuildCommand -Command 'cmake' -Arguments @('--build', $BuildDirectory, '--parallel', "$Jobs", '--target', 'format-check', 'UE4SS', 'proxy', 'PBZEditor')
+        Invoke-BuildCommand -Command 'cmake' -Arguments @('--build', $BuildDirectory, '--parallel', "$Jobs", '--target', 'format-check', 'UE4SS', 'proxy', 'PBZEditor', 'PBZItemTests')
+        Assert-ModHeaderDependencies -BuildDirectory $BuildDirectory
+        Invoke-BuildCommand -Command 'ctest' -Arguments @('--test-dir', $BuildDirectory, '--output-on-failure')
     } finally { Pop-Location }
     & pwsh -NoProfile -File (Join-Path $PSScriptRoot 'setup.ps1') -VerifyOnly
     if ($LASTEXITCODE -ne 0) { throw 'Source verification failed after build.' }
@@ -166,7 +210,7 @@ try {
         schemaVersion=1; purpose='PBZ-source-build'; status='success'; completedUtc=[DateTime]::UtcNow.ToString('o')
         ue4ssCommit=$inputs.ue4ssCommit; recursiveSubmodules=$nested
         profileManifestSha256=$inputs.profileManifestSha256; configSha256=$inputs.configSha256
-        triplet=$triplet
+        triplet=$triplet; msvcDependencyPrefixSha256=(Get-FileHash -LiteralPath (Join-Path $BuildDirectory 'CMakeFiles/PBZShowIncludes/prefix.bin')).Hash.ToLowerInvariant(); headerDependencies='verified'
         toolchain=[ordered]@{ compiler='MSVC'; compilerPath=$compilerPath; compilerVersion=$compilerVersion; architecture='x64'; windowsSdk=$env:WindowsSDKVersion.TrimEnd('\'); cmake=(& cmake --version)[0]; ninja=(& ninja --version); rustc=(& rustc --version); cargo=(& cargo --version) }
         sourceFiles=$sourceHashes; artifacts=$artifacts
     }

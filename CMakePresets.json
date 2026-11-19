@@ -19,6 +19,6 @@
     "name": "ninja-msvc-x64",
     "configurePreset": "ninja-msvc-x64",
     "jobs": 4,
-    "targets": ["UE4SS", "proxy", "PBZEditor"]
+    "targets": ["UE4SS", "proxy", "PBZEditor", "PBZItemTests"]
   }]
 }

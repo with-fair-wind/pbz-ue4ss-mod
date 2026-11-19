@@ -21,6 +21,21 @@ function Assert-PBZPaths([string[]]$Paths) {
     }
 }
 
+function Get-PBZBuildSources([string]$Root) {
+    $sources = @('CMakeLists.txt', 'CMakePresets.json', 'cmake/PBZTooling.cmake', 'mods/CMakeLists.txt',
+        'mods/PBZEditor/CMakeLists.txt', 'scripts/build.ps1', 'scripts/setup.ps1', 'scripts/profile.ps1',
+        'scripts/runtime.ps1', '.clang-format')
+    $mod = Join-Path $Root 'mods/PBZEditor'
+    foreach ($file in Get-ChildItem -LiteralPath $mod -File -Recurse) {
+        if ($file.Extension -in @('.cpp', '.hpp', '.h', '.inl')) {
+            $sources += [IO.Path]::GetRelativePath($Root, $file.FullName).Replace('\', '/')
+        }
+    }
+    $sources = @($sources | Sort-Object -Unique)
+    Assert-PBZPaths @($sources | ForEach-Object { Join-Path $Root $_ })
+    return $sources
+}
+
 function Get-PBZBuild([string]$Root, [string]$BuildDirectory) {
     if (-not $BuildDirectory) { $BuildDirectory = Join-Path $Root 'build/msvc' }
     if (-not [IO.Path]::IsPathRooted($BuildDirectory)) { $BuildDirectory = Join-Path $Root $BuildDirectory }
@@ -36,9 +51,7 @@ function Get-PBZBuild([string]$Root, [string]$BuildDirectory) {
         $info.triplet -cne 'Game__Shipping__Win64' -or $info.ue4ssCommit -cne $profile.ue4ssCommit -or
         $info.profileManifestSha256 -cne $profile.profileManifestSha256 -or $info.configSha256 -cne $profile.configSha256 -or
         $info.toolchain.compiler -cne 'MSVC' -or $info.toolchain.architecture -cne 'x64') { throw 'Invalid or stale build receipt. Build again.' }
-    $sources = @('CMakeLists.txt', 'CMakePresets.json', 'cmake/PBZTooling.cmake', 'mods/CMakeLists.txt',
-        'mods/PBZEditor/CMakeLists.txt', 'mods/PBZEditor/src/dllmain.cpp', 'scripts/build.ps1',
-        'scripts/setup.ps1', 'scripts/profile.ps1', 'scripts/runtime.ps1', '.clang-format')
+    $sources = @(Get-PBZBuildSources $Root)
     if (@(Compare-Object @($info.sourceFiles.Keys | Sort-Object) @($sources | Sort-Object)).Count) { throw 'Build source receipt is incomplete.' }
     foreach ($relative in $sources) {
         if ((Get-PBZHash (Join-Path $Root $relative)) -cne $info.sourceFiles[$relative]) { throw "Source changed since build: $relative" }
